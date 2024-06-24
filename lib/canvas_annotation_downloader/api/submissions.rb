@@ -7,9 +7,10 @@ module CanvasAnnotationDownloader
         while next_page?
           @page_number += 1
 
-          uri = URI("#{api_base_url}/courses/#{course_id}/assignments/#{assignment_id}/submissions")
-          query_params = { page: page_number, per_page: 100 }
-          uri.query = URI.encode_www_form(query_params)
+          uri = URI(
+            "#{api_base_url}/courses/#{course_id}/assignments/#{assignment_id}/submissions" \
+            "?page=#{page_number}&per_page=100"
+          )
 
           request(uri).each { yield _1 }
         end

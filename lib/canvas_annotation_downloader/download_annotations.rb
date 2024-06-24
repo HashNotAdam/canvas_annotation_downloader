@@ -1,27 +1,32 @@
 # frozen_string_literal: true
 
+require "axlsx"
+
 require_relative "api"
 require_relative "pdf_reader"
 
 module CanvasAnnotationDownloader
   class DownloadAnnotations
-    private attr_reader :course_id, :assignment_id, :api
+    private attr_reader :course_id, :assignment_id, :api, :submission_groups
 
     def self.call(...) = new(...).call
 
     def initialize(course_id:, assignment_id:)
       @course_id = course_id
       @assignment_id = assignment_id
+
       @api = API.new
+      @submission_groups = []
     end
 
     def call
       puts "\n\nDownloading annotations for course #{course_id} and assignment #{assignment_id}\n\n"
 
       make_temp_directories
-      download_annotated_pdfs.each do |pdf_path|
-        download_annotations(pdf_path)
-      end
+      load_submissions
+      download_annotated_pdfs
+      download_annotations
+      generate_summary_document
     ensure
       FileUtils.rm_r(DOWNLOAD_DIRECTORY) if Dir.exist?(DOWNLOAD_DIRECTORY)
     end
@@ -39,47 +44,92 @@ module CanvasAnnotationDownloader
       Dir.mkdir(ANNOTATION_DIRECTORY) unless Dir.exist?(ANNOTATION_DIRECTORY)
     end
 
+    def load_submissions
+      api.submissions.in_batches(course_id:, assignment_id:) do |submission|
+        @submission_groups << { submission: submission }
+      end
+    end
+
     def download_annotated_pdfs
-      attachments = submission_attachments
-      total_attachments = attachments.values.flatten.size
+      load_submission_attachments
+      total_attachments = submission_groups.sum { _1.fetch(:attachments).size }
       attachment_index = 0
 
-      attachments.flat_map do |user_id, user_attachments|
+      submission_groups.flat_map do |submission_group|
+        user_attachments = submission_group.fetch(:attachments)
         user_attachments.map.with_index do |attachment, user_index|
           puts "Downloading attachment #{attachment_index += 1} of #{total_attachments}"
 
-          file_path = "#{DOWNLOAD_DIRECTORY}/#{course_id}-#{assignment_id}-#{user_id}" \
+          user_id = submission_group.fetch(:submission).fetch(:user_id)
+          pdf_path = "#{DOWNLOAD_DIRECTORY}/#{course_id}-#{assignment_id}-#{user_id}" \
             "#{"-#{user_index}" if user_attachments.size > 1}" \
             ".pdf"
-          File.write(file_path, attachment.download, mode: "wb")
+          File.write(pdf_path, attachment.fetch(:submission_attachment).download, mode: "wb")
 
-          file_path
+          attachment[:pdf_path] = pdf_path
         end
       end
     end
 
-    def submission_attachments
-      result = Hash.new { |h, k| h[k] = [] }
+    def load_submission_attachments
+      submission_groups.each do |submission_group|
+        submission_group[:attachments] = []
 
-      api.submissions.in_batches(course_id:, assignment_id:) do |submission|
-        submission.fetch("attachments", []).each do |attachment_details|
+        submission_group.fetch(:submission).fetch(:attachments, []).each do |attachment_details|
           submission_attachment = api.submission_attachments.annotated(attachment_details:)
-          result[submission.fetch("user_id")] << submission_attachment
+          submission_group[:attachments] << { submission_attachment: }
         end
       end
-
-      result
     end
 
-    def download_annotations(pdf_path)
-      return if pdf_path.nil?
+    def download_annotations
+      submission_groups.each do |submission_group|
+        submission_group.fetch(:attachments).each do |attachment|
+          pdf_path = attachment.fetch(:pdf_path)
+          pdf_reader = PDFReader.new(pdf_path)
+          return if pdf_reader.notes.nil?
 
-      pdf_reader = PDFReader.new(pdf_path)
-      return if pdf_reader.notes.nil?
+          file_name = pdf_path.split("/").last.gsub(".pdf", ".txt")
+          text_path = "#{ANNOTATION_DIRECTORY}/#{file_name}"
+          File.write(text_path, pdf_reader.notes.join("\n"))
 
-      file_name = pdf_path.split("/").last.gsub(".pdf", ".txt")
-      file_path = "#{ANNOTATION_DIRECTORY}/#{file_name}"
-      File.write(file_path, pdf_reader.notes.join("\n"))
+          attachment[:text_path] = text_path
+        end
+      end
+    end
+
+    def generate_summary_document
+      xlsx = Axlsx::Package.new
+      workbook = xlsx.workbook
+      worksheet = workbook.add_worksheet do |sheet|
+        sheet.add_row(["User ID", "Student ID", "Assignment grade", "Annotations"])
+      end
+
+      add_annotations_to_worksheet(worksheet)
+
+      FileUtils.rm(annotations_file_path) if File.exist?(annotations_file_path)
+      xlsx.serialize(annotations_file_path)
+    end
+
+    def add_annotations_to_worksheet(worksheet)
+      index = 0
+      submission_groups.each do |submission_group|
+        user_id = submission_group.fetch(:submission).fetch(:user_id)
+        grade = submission_group.fetch(:submission).fetch(:grade)
+        annotations = submission_group.fetch(:attachments)
+
+        annotations.each do |annotation|
+          text_path = annotation.fetch(:text_path)
+          relative_text_path = text_path.gsub(%r{^tmp/}, "./")
+
+          row = worksheet.add_row([user_id, nil, grade, relative_text_path])
+          worksheet.add_hyperlink(location: relative_text_path, ref: row.last.r)
+        end
+      end
+    end
+
+    def annotations_file_path
+      "#{TEMP_DIRECTORY}/annotations-#{course_id}-#{assignment_id}.xlsx"
     end
   end
 end

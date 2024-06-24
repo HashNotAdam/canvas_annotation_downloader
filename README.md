@@ -29,6 +29,7 @@ Call the CLI via the bin file:
 
 - `bin/download`
 
-It will ask for the Course ID and Assignment ID before downloading the annotations to:
+It will ask for the Course ID and Assignment ID before downloading the annotations and an Excel summary file to:
 
+- `tmp/annotations.xlsx`
 - `tmp/annotations`

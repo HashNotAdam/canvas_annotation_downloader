@@ -22,6 +22,7 @@ Gem::Specification.new do |spec|
   end
   spec.require_paths = ["lib"]
 
+  spec.add_dependency "caxlsx", "< 5.0"
   spec.add_dependency "dotenv", "< 4.0"
   spec.add_dependency "pdf-reader", "< 3.0"
 end
