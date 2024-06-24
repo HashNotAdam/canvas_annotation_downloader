@@ -25,7 +25,7 @@ module CanvasAnnotationDownloader
         begin
           uri = URI("#{build_url}/is_ready")
           response_body = request(uri)
-        end until response_body.fetch("ready") == true
+        end until response_body.fetch(:ready) == true
 
         uri = URI(build_url)
         request(uri, format: :plain)

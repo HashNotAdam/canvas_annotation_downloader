@@ -58,7 +58,7 @@ module CanvasAnnotationDownloader
         end
 
         response_body = last_response.body
-        response_body = JSON.parse(response_body) if format == :json
+        response_body = JSON.parse(response_body, symbolize_names: true) if format == :json
         if last_response.is_a?(Net::HTTPSuccess) || last_response.is_a?(Net::HTTPFound)
           return response_body
         end
@@ -68,10 +68,10 @@ module CanvasAnnotationDownloader
 
       def error_messages(response_body:, format:)
         return response_body unless format == :json
-        return response_body unless response_body.key?("errors")
+        return response_body unless response_body.key?(:errors)
 
-        response_body.fetch("errors").
-          map { "#{_1.fetch("error_code")}: #{_1.fetch("message")}" }.
+        response_body.fetch(:errors).
+          map { "#{_1.fetch(:error_code)}: #{_1.fetch(:message)}" }.
           join("\n")
       end
 
